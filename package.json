@@ -1,0 +1,39 @@
+{
+  "name": "openclaw-sms-channel",
+  "version": "1.0.0",
+  "description": "SMS channel plugin for OpenClaw via Kudosity Agent Comms Platform",
+  "type": "module",
+  "main": "index.js",
+  "openclaw": {
+    "channel": {
+      "id": "sms",
+      "label": "SMS",
+      "selectionLabel": "SMS (via Kudosity)",
+      "detailLabel": "SMS via Kudosity Agent Comms Platform",
+      "docsPath": "/channels/sms",
+      "docsLabel": "sms",
+      "blurb": "SMS messaging through Kudosity Agent Communications Platform with built-in safety controls",
+      "order": 50,
+      "quickstartAllowFrom": true,
+      "forceAccountBinding": false
+    },
+    "install": {
+      "npmSpec": "openclaw-sms-channel",
+      "localPath": "extensions/sms",
+      "defaultChoice": "local"
+    }
+  },
+  "keywords": [
+    "openclaw",
+    "channel",
+    "sms",
+    "messaging",
+    "kudosity"
+  ],
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.17"
+  }
+}
