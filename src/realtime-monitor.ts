@@ -1,11 +1,11 @@
-// SMS Realtime Monitor — Receives inbound messages via Supabase Realtime Broadcast
+// SMS Polling Monitor — Checks for new inbound messages via Kudosity API
 //
-// Instead of requiring a public URL for webhook callbacks, this monitor
-// connects OUTBOUND to Supabase Realtime and subscribes to a broadcast
-// channel for this agent. Works from localhost with zero infrastructure.
+// The Supabase Realtime broadcast approach fails inside the OpenClaw gateway
+// process due to WebSocket conflicts. This polling approach is simpler and
+// works reliably in any environment.
 //
-// The Kudosity platform broadcasts inbound messages to channel
-// `agent:{agentProfileId}:inbound` — the plugin just listens.
+// Polls GET /api/v1/conversations for new inbound messages every few seconds.
+// For a single agent this is lightweight — one HTTP request every 3 seconds.
 
 import type { ResolvedSmsAccount } from "./types.js";
 
@@ -27,25 +27,9 @@ export type RealtimeMonitorRuntime = {
   };
 };
 
-type BroadcastPayload = {
-  message_id: string;
-  chat_id: string;
-  from: string;
-  to: string;
-  content: string;
-  timestamp: string;
-  agent_profile_id: string;
-  provider_message_id?: string | null;
-};
-
 /**
- * Start a Supabase Realtime Broadcast subscription for inbound messages.
- *
- * The plugin subscribes to the `agent:{agentProfileId}:inbound` channel.
- * The Kudosity platform broadcasts to this channel when an inbound SMS
- * is routed to the agent. No RLS or authentication needed for broadcasts.
- *
- * Returns a cleanup function to stop the subscription.
+ * Start polling for new inbound messages.
+ * Returns a cleanup function to stop polling.
  */
 export async function startRealtimeMonitor(params: {
   account: ResolvedSmsAccount;
@@ -53,96 +37,94 @@ export async function startRealtimeMonitor(params: {
   agentProfileId: string;
 }): Promise<() => void> {
   const { account, runtime, agentProfileId } = params;
+  const { apiKey, baseUrl } = account.config;
   const { allowFrom, dmPolicy } = account.config;
+  const pollIntervalMs = 3000;
 
-  if (!agentProfileId) {
-    throw new Error("agentProfileId is required for realtime monitor");
-  }
+  let lastSeenTimestamp = new Date().toISOString();
+  let running = true;
 
-  runtime.log?.info?.(`[sms] Starting Supabase Realtime broadcast monitor for agent ${agentProfileId}`);
+  runtime.log?.info?.(`[sms] Starting polling monitor (${pollIntervalMs}ms interval)`);
 
-  // 1. Get Supabase connection details from the platform
-  let supabaseUrl: string;
-  let supabaseAnonKey: string;
+  async function poll() {
+    if (!running) return;
 
-  try {
-    const infoRes = await fetch(`${account.config.baseUrl}/realtime-config`, {
-      headers: { Authorization: `Bearer ${account.config.apiKey}` },
-    });
+    try {
+      // Fetch recent inbound messages since last check
+      const res = await fetch(
+        `${baseUrl}/messages/inbound?since=${encodeURIComponent(lastSeenTimestamp)}&agent_profile_id=${agentProfileId}`,
+        {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          signal: AbortSignal.timeout(10000),
+        }
+      );
 
-    if (!infoRes.ok) {
-      throw new Error(`Failed to get realtime config: ${infoRes.status}`);
-    }
-
-    const info = await infoRes.json();
-    supabaseUrl = info.supabase_url;
-    supabaseAnonKey = info.supabase_anon_key;
-  } catch (err) {
-    runtime.log?.error?.(`[sms] Failed to get realtime config: ${err}`);
-    throw err;
-  }
-
-  // 2. Connect to Supabase
-  let supabase: any;
-  try {
-    const { createClient } = await import("@supabase/supabase-js");
-    supabase = createClient(supabaseUrl, supabaseAnonKey);
-  } catch (err) {
-    runtime.log?.error?.("[sms] Failed to import @supabase/supabase-js. Install it: npm install @supabase/supabase-js");
-    throw err;
-  }
-
-  // 3. Subscribe to the agent's broadcast channel
-  const channelName = `agent:${agentProfileId}:inbound`;
-  const channel = supabase
-    .channel(channelName)
-    .on("broadcast", { event: "message.inbound" }, (event: { payload: BroadcastPayload }) => {
-      const payload = event.payload;
-
-      if (!payload?.from || !payload?.content) {
-        runtime.log?.warn?.("[sms] Broadcast missing from or content");
+      if (!res.ok) {
+        // If the polling endpoint doesn't exist yet, log once and keep trying
+        if (res.status === 404) {
+          runtime.log?.debug?.("[sms] Polling endpoint not found — may not be deployed yet");
+        } else {
+          runtime.log?.warn?.(`[sms] Poll failed: ${res.status}`);
+        }
         return;
       }
 
-      // Check allowFrom if dmPolicy is pairing
-      if (dmPolicy === "pairing" && allowFrom && allowFrom.length > 0) {
-        const normalised = payload.from.replace(/[^0-9]/g, "");
-        const isAllowed = allowFrom.some((a) =>
-          normalised.includes(a.replace(/[^0-9]/g, ""))
-        );
-        if (!isAllowed) {
-          runtime.log?.warn?.(`[sms] Rejected broadcast from ${payload.from} (not in allowFrom)`);
-          return;
+      const data = await res.json();
+      const messages = data.messages || [];
+
+      for (const msg of messages) {
+        const fromPhone = msg.from || "";
+
+        // Check allowFrom
+        if (dmPolicy === "pairing" && allowFrom && allowFrom.length > 0) {
+          const normalised = fromPhone.replace(/[^0-9]/g, "");
+          const isAllowed = allowFrom.some((a: string) =>
+            normalised.includes(a.replace(/[^0-9]/g, ""))
+          );
+          if (!isAllowed) {
+            runtime.log?.warn?.(`[sms] Rejected message from ${fromPhone} (not in allowFrom)`);
+            continue;
+          }
+        }
+
+        runtime.log?.info?.(`[sms] Inbound from ${fromPhone}: "${msg.content}"`);
+
+        if (runtime.handleInboundMessage) {
+          runtime.handleInboundMessage({
+            channel: "sms",
+            from: fromPhone,
+            content: msg.content,
+            messageId: msg.message_id,
+            conversationId: msg.chat_id,
+            timestamp: msg.timestamp,
+            metadata: {
+              agent_profile_id: agentProfileId,
+              to: msg.to,
+            },
+          });
+        }
+
+        // Update watermark
+        if (msg.timestamp > lastSeenTimestamp) {
+          lastSeenTimestamp = msg.timestamp;
         }
       }
-
-      runtime.log?.info?.(`[sms] Inbound from ${payload.from}: "${payload.content}"`);
-
-      // Route to OpenClaw session
-      if (runtime.handleInboundMessage) {
-        runtime.handleInboundMessage({
-          channel: "sms",
-          from: payload.from,
-          content: payload.content,
-          messageId: payload.message_id,
-          conversationId: payload.chat_id,
-          timestamp: payload.timestamp,
-          metadata: {
-            agent_profile_id: payload.agent_profile_id,
-            to: payload.to,
-          },
-        });
+    } catch (err) {
+      if (err instanceof Error && err.name !== "AbortError") {
+        runtime.log?.debug?.(`[sms] Poll error: ${err.message}`);
       }
-    })
-    .subscribe((status: string) => {
-      runtime.log?.info?.(`[sms] Broadcast subscription status: ${status}`);
-    });
+    }
+  }
 
-  runtime.log?.info?.(`[sms] Listening on broadcast channel: ${channelName}`);
+  // Start polling loop
+  const intervalId = setInterval(poll, pollIntervalMs);
 
-  // Return cleanup function
+  // Initial poll
+  poll();
+
   return () => {
-    runtime.log?.info?.("[sms] Stopping broadcast monitor");
-    supabase.removeChannel(channel);
+    running = false;
+    clearInterval(intervalId);
+    runtime.log?.info?.("[sms] Polling monitor stopped");
   };
 }
