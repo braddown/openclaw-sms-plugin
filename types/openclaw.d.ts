@@ -1,5 +1,16 @@
 // Stub type declarations for OpenClaw Plugin SDK
 // These types are provided by the OpenClaw runtime at load time
+declare module "openclaw/plugin-sdk/channel-core" {
+  export function defineChannelPluginEntry(params: {
+    id: string;
+    name: string;
+    description: string;
+    plugin: any;
+    registerCliMetadata?: (api: any) => void;
+    registerFull?: (api: any) => void;
+  }): any;
+}
+
 declare module "openclaw/plugin-sdk" {
   export interface ChannelPlugin<T = any> {
     id: string;

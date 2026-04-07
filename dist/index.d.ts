@@ -1,1 +1,2 @@
-export { smsPlugin } from "./src/channel.js";
+declare const _default: any;
+export default _default;
