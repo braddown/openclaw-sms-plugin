@@ -1,11 +1,11 @@
-// SMS Realtime Monitor — Receives inbound messages via Supabase Realtime
+// SMS Realtime Monitor — Receives inbound messages via Supabase Realtime Broadcast
 //
 // Instead of requiring a public URL for webhook callbacks, this monitor
-// connects OUTBOUND to Supabase Realtime and subscribes to new messages
-// on the messages table. Works from localhost with zero infrastructure.
+// connects OUTBOUND to Supabase Realtime and subscribes to a broadcast
+// channel for this agent. Works from localhost with zero infrastructure.
 //
-// This is how OpenClaw channels work — the agent connects OUT to the
-// service, not the other way around.
+// The Kudosity platform broadcasts inbound messages to channel
+// `agent:{agentProfileId}:inbound` — the plugin just listens.
 
 import type { ResolvedSmsAccount } from "./types.js";
 
@@ -27,27 +27,23 @@ export type RealtimeMonitorRuntime = {
   };
 };
 
-type SupabaseRealtimePayload = {
-  new: {
-    id: string;
-    chat_id: string;
-    content: string;
-    direction: string;
-    channel: string;
-    source: string;
-    status: string;
-    sender_id: string;
-    ai_processing_info: Record<string, unknown>;
-    created_at: string;
-  };
+type BroadcastPayload = {
+  message_id: string;
+  chat_id: string;
+  from: string;
+  to: string;
+  content: string;
+  timestamp: string;
+  agent_profile_id: string;
+  provider_message_id?: string | null;
 };
 
 /**
- * Start a Supabase Realtime subscription for inbound messages.
+ * Start a Supabase Realtime Broadcast subscription for inbound messages.
  *
- * The plugin discovers the Supabase connection details from the Kudosity
- * platform API, then opens a persistent connection to listen for new
- * inbound messages routed to this agent.
+ * The plugin subscribes to the `agent:{agentProfileId}:inbound` channel.
+ * The Kudosity platform broadcasts to this channel when an inbound SMS
+ * is routed to the agent. No RLS or authentication needed for broadcasts.
  *
  * Returns a cleanup function to stop the subscription.
  */
@@ -57,18 +53,21 @@ export async function startRealtimeMonitor(params: {
   agentProfileId: string;
 }): Promise<() => void> {
   const { account, runtime, agentProfileId } = params;
-  const { apiKey, baseUrl } = account.config;
   const { allowFrom, dmPolicy } = account.config;
 
-  runtime.log?.info?.("[sms] Starting Supabase Realtime monitor for inbound messages");
+  if (!agentProfileId) {
+    throw new Error("agentProfileId is required for realtime monitor");
+  }
 
-  // 1. Discover Supabase connection details from the platform
+  runtime.log?.info?.(`[sms] Starting Supabase Realtime broadcast monitor for agent ${agentProfileId}`);
+
+  // 1. Get Supabase connection details from the platform
   let supabaseUrl: string;
   let supabaseAnonKey: string;
 
   try {
-    const infoRes = await fetch(`${baseUrl}/realtime-config`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
+    const infoRes = await fetch(`${account.config.baseUrl}/realtime-config`, {
+      headers: { Authorization: `Bearer ${account.config.apiKey}` },
     });
 
     if (!infoRes.ok) {
@@ -83,88 +82,67 @@ export async function startRealtimeMonitor(params: {
     throw err;
   }
 
-  // 2. Connect to Supabase Realtime
-  // Dynamic import since @supabase/supabase-js may not be a direct dependency
+  // 2. Connect to Supabase
   let supabase: any;
   try {
     const { createClient } = await import("@supabase/supabase-js");
-    supabase = createClient(supabaseUrl, supabaseAnonKey, {
-      realtime: {
-        params: {
-          eventsPerSecond: 10,
-        },
-      },
-    });
+    supabase = createClient(supabaseUrl, supabaseAnonKey);
   } catch (err) {
     runtime.log?.error?.("[sms] Failed to import @supabase/supabase-js. Install it: npm install @supabase/supabase-js");
     throw err;
   }
 
-  // 3. Subscribe to INSERT events on the messages table
-  const channelName = `sms-inbound:${agentProfileId}:${Date.now()}`;
+  // 3. Subscribe to the agent's broadcast channel
+  const channelName = `agent:${agentProfileId}:inbound`;
   const channel = supabase
     .channel(channelName)
-    .on(
-      "postgres_changes",
-      {
-        event: "INSERT",
-        schema: "public",
-        table: "messages",
-        filter: `direction=eq.inbound`,
-      },
-      (payload: SupabaseRealtimePayload) => {
-        const msg = payload.new;
+    .on("broadcast", { event: "message.inbound" }, (event: { payload: BroadcastPayload }) => {
+      const payload = event.payload;
 
-        // Only process messages routed to this agent
-        const agentId = msg.ai_processing_info?.agent_profile_id;
-        if (agentId !== agentProfileId) {
+      if (!payload?.from || !payload?.content) {
+        runtime.log?.warn?.("[sms] Broadcast missing from or content");
+        return;
+      }
+
+      // Check allowFrom if dmPolicy is pairing
+      if (dmPolicy === "pairing" && allowFrom && allowFrom.length > 0) {
+        const normalised = payload.from.replace(/[^0-9]/g, "");
+        const isAllowed = allowFrom.some((a) =>
+          normalised.includes(a.replace(/[^0-9]/g, ""))
+        );
+        if (!isAllowed) {
+          runtime.log?.warn?.(`[sms] Rejected broadcast from ${payload.from} (not in allowFrom)`);
           return;
         }
-
-        const fromPhone = (msg.ai_processing_info?.from_phone as string) || "";
-        const toPhone = (msg.ai_processing_info?.to_phone as string) || "";
-
-        // Check allowFrom if dmPolicy is pairing
-        if (dmPolicy === "pairing" && allowFrom && allowFrom.length > 0) {
-          const normalised = fromPhone.replace(/[^0-9]/g, "");
-          const isAllowed = allowFrom.some((a) =>
-            normalised.includes(a.replace(/[^0-9]/g, ""))
-          );
-          if (!isAllowed) {
-            runtime.log?.warn?.(`[sms] Rejected message from ${fromPhone} (not in allowFrom)`);
-            return;
-          }
-        }
-
-        runtime.log?.info?.(`[sms] Realtime inbound from ${fromPhone}: "${msg.content}"`);
-
-        // Route to OpenClaw session
-        if (runtime.handleInboundMessage) {
-          runtime.handleInboundMessage({
-            channel: "sms",
-            from: fromPhone,
-            content: msg.content,
-            messageId: msg.id,
-            conversationId: msg.chat_id,
-            timestamp: msg.created_at,
-            metadata: {
-              agent_profile_id: agentId,
-              to: toPhone,
-              source: msg.source,
-            },
-          });
-        }
       }
-    )
+
+      runtime.log?.info?.(`[sms] Inbound from ${payload.from}: "${payload.content}"`);
+
+      // Route to OpenClaw session
+      if (runtime.handleInboundMessage) {
+        runtime.handleInboundMessage({
+          channel: "sms",
+          from: payload.from,
+          content: payload.content,
+          messageId: payload.message_id,
+          conversationId: payload.chat_id,
+          timestamp: payload.timestamp,
+          metadata: {
+            agent_profile_id: payload.agent_profile_id,
+            to: payload.to,
+          },
+        });
+      }
+    })
     .subscribe((status: string) => {
-      runtime.log?.info?.(`[sms] Realtime subscription status: ${status}`);
+      runtime.log?.info?.(`[sms] Broadcast subscription status: ${status}`);
     });
 
-  runtime.log?.info?.("[sms] Supabase Realtime monitor started — listening for inbound messages");
+  runtime.log?.info?.(`[sms] Listening on broadcast channel: ${channelName}`);
 
   // Return cleanup function
   return () => {
-    runtime.log?.info?.("[sms] Stopping Supabase Realtime monitor");
+    runtime.log?.info?.("[sms] Stopping broadcast monitor");
     supabase.removeChannel(channel);
   };
 }
