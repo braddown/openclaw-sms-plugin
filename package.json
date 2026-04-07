@@ -3,10 +3,14 @@
   "version": "1.0.0",
   "description": "SMS channel plugin for OpenClaw via Kudosity Agent Comms Platform",
   "type": "module",
-  "main": "index.js",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "postinstall": "npm run build"
+  },
   "openclaw": {
     "extensions": [
-      "./index.js"
+      "./dist/index.js"
     ],
     "channel": {
       "id": "sms",
@@ -33,9 +37,11 @@
     "messaging",
     "kudosity"
   ],
-  "dependencies": {},
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.0"
+  },
   "devDependencies": {
-    "@types/node": "^25.5.2",
-    "typescript": "^6.0.2"
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
   }
 }

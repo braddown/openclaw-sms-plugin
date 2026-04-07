@@ -19,7 +19,7 @@ export function listSmsAccountIds(cfg: OpenClawConfig): string[] {
   const accounts = smsConfig.accounts;
   if (accounts && typeof accounts === "object") {
     for (const [accountId, accountConfig] of Object.entries(accounts)) {
-      if (accountConfig && typeof accountConfig === "object" && accountConfig.enabled) {
+      if (accountConfig && typeof accountConfig === "object" && (accountConfig as any).enabled) {
         ids.add(accountId);
       }
     }
@@ -59,7 +59,7 @@ export function resolveSmsAccountSync(params: {
       agentId: smsConfig.agentId,
       allowFrom: smsConfig.allowFrom || [],
       dmPolicy: smsConfig.dmPolicy || "pairing",
-      webhookPort: smsConfig.webhookPort || 3001,
+      callbackSecret: smsConfig.callbackSecret,
       webhookPath: smsConfig.webhookPath || "/channels/sms/webhook",
     };
     name = smsConfig.name || "SMS";
@@ -77,7 +77,7 @@ export function resolveSmsAccountSync(params: {
       agentId: accountConfig.agentId || smsConfig.agentId,
       allowFrom: accountConfig.allowFrom || smsConfig.allowFrom || [],
       dmPolicy: accountConfig.dmPolicy || smsConfig.dmPolicy || "pairing",
-      webhookPort: accountConfig.webhookPort || smsConfig.webhookPort || 3001,
+      callbackSecret: accountConfig.callbackSecret || smsConfig.callbackSecret,
       webhookPath: accountConfig.webhookPath || smsConfig.webhookPath || "/channels/sms/webhook",
     };
     name = accountConfig.name || resolvedAccountId;

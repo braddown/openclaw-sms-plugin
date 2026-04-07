@@ -1,10 +1,2 @@
 node_modules/
-*.js
-*.js.map
-*.d.ts
-*.d.ts.map
-!index.ts
 package-lock.json
-tsconfig.json
-index-js.js
-src/channel-js.js
