@@ -23,6 +23,7 @@ import {
 import { SmsConfigSchema } from "./config-schema.js";
 import { sendSmsMessage, chunkSmsText } from "./send.js";
 import { createSmsWebhookHandler } from "./monitor.js";
+import { startRealtimeMonitor } from "./realtime-monitor.js";
 
 const meta = {
   id: "sms",
@@ -214,10 +215,9 @@ export const smsPlugin: ChannelPlugin<ResolvedSmsAccount> = {
   gateway: {
     startAccount: async (ctx) => {
       const account = ctx.account;
-      const webhookPath = account.config.webhookPath || "/channels/sms/webhook";
-      
+
       ctx.log?.info(`[${account.accountId}] Starting SMS provider via Kudosity`);
-      
+
       try {
         // Test API connectivity
         const authenticated = await checkSmsAuthenticated(account.config.apiKey, account.config.baseUrl);
@@ -225,7 +225,41 @@ export const smsPlugin: ChannelPlugin<ResolvedSmsAccount> = {
           throw new Error("Kudosity API authentication failed - check your API key");
         }
 
-        // Register webhook route on the gateway's HTTP server
+        // Resolve agent profile ID for realtime filtering
+        let agentProfileId: string | undefined = account.config.agentId;
+        if (!agentProfileId) {
+          // Fetch from API if not configured
+          try {
+            const res = await fetch(`${account.config.baseUrl}/agents`, {
+              headers: { Authorization: `Bearer ${account.config.apiKey}` },
+            });
+            if (res.ok) {
+              const data = await res.json();
+              agentProfileId = data.data?.[0]?.id;
+            }
+          } catch {
+            // Non-fatal — will still work, just won't filter by agent
+          }
+        }
+
+        // Primary: Supabase Realtime (works from localhost, no public URL needed)
+        let realtimeCleanup: (() => void) | undefined;
+        try {
+          realtimeCleanup = await startRealtimeMonitor({
+            account,
+            runtime: {
+              handleInboundMessage: ctx.runtime.handleInboundMessage,
+              log: ctx.log,
+            },
+            agentProfileId: agentProfileId || "",
+          });
+          ctx.log?.info(`[${account.accountId}] Supabase Realtime monitor started`);
+        } catch (err) {
+          ctx.log?.warn(`[${account.accountId}] Realtime monitor failed, falling back to webhook: ${err}`);
+        }
+
+        // Fallback: Register webhook route (for when gateway is publicly accessible)
+        const webhookPath = account.config.webhookPath || "/channels/sms/webhook";
         const handler = createSmsWebhookHandler({
           account,
           runtime: {
@@ -239,7 +273,7 @@ export const smsPlugin: ChannelPlugin<ResolvedSmsAccount> = {
           handler,
         });
 
-        ctx.log?.info(`[${account.accountId}] SMS webhook registered at ${webhookPath}`);
+        ctx.log?.info(`[${account.accountId}] SMS webhook also registered at ${webhookPath} (fallback)`);
 
         ctx.setStatus({
           accountId: account.accountId,
@@ -248,17 +282,22 @@ export const smsPlugin: ChannelPlugin<ResolvedSmsAccount> = {
           lastError: null,
         });
 
+        // Store cleanup for shutdown
+        if (realtimeCleanup) {
+          (ctx as any)._smsRealtimeCleanup = realtimeCleanup;
+        }
+
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        
+
         ctx.log?.error(`[${account.accountId}] SMS provider failed to start: ${errorMessage}`);
-        
+
         ctx.setStatus({
           accountId: account.accountId,
           running: false,
           lastError: errorMessage,
         });
-        
+
         throw error;
       }
     },
