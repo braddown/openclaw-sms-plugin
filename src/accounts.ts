@@ -101,7 +101,7 @@ export function resolveSmsAccountSync(params: {
 
 export async function checkSmsAuthenticated(apiKey: string, baseUrl: string): Promise<boolean> {
   try {
-    const response = await fetch(`${baseUrl}/health`, {
+    const response = await fetch(`${baseUrl}/register/status`, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${apiKey}`,

@@ -6,7 +6,7 @@ export type SmsConfig = {
   agentId?: string;
   allowFrom?: string[];
   dmPolicy?: "open" | "pairing";
-  webhookPort?: number;
+  callbackSecret?: string;
   webhookPath?: string;
 };
 
@@ -43,21 +43,37 @@ export type KudosityApiResponse = {
   error?: string;
 };
 
-export type KudosityWebhookPayload = {
-  event: "message.inbound" | "message.sent" | "message.failed" | "safety.blocked";
-  timestamp: string;
-  data: {
+// Conversation from GET /api/v1/conversations
+export type KudosityConversation = {
+  id: string;
+  profile_id: string;
+  status: string;
+  channel: string;
+  priority: string;
+  subject: string | null;
+  created_at: string;
+  updated_at: string;
+  cdp_profiles: {
     id: string;
-    conversation_id?: string;
-    content?: string;
-    from?: string;
-    to?: string;
-    channel?: string;
-    agent_profile_id?: string;
-    provider_message_id?: string;
-    created_at?: string;
-    [key: string]: unknown;
+    email: string | null;
+    mobile: string;
+    first_name: string;
+    last_name: string;
   };
+};
+
+// Message from GET /api/v1/conversations/:id/messages
+export type KudosityMessage = {
+  id: string;
+  content: string;
+  direction: "inbound" | "outbound";
+  channel: string;
+  source: string;
+  status: string;
+  message_type: string;
+  sender_id: string;
+  ai_processing_info: Record<string, unknown>;
+  created_at: string;
 };
 
 export type SendResult = {

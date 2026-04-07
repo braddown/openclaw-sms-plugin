@@ -22,7 +22,7 @@ import {
 } from "./accounts.js";
 import { SmsConfigSchema } from "./config-schema.js";
 import { sendSmsMessage, chunkSmsText } from "./send.js";
-import { monitorSmsProvider } from "./monitor.js";
+import { createSmsWebhookHandler } from "./monitor.js";
 
 const meta = {
   id: "sms",
@@ -76,7 +76,7 @@ export const smsPlugin: ChannelPlugin<ResolvedSmsAccount> = {
           "name",
           "allowFrom",
           "dmPolicy",
-          "webhookPort",
+          "callbackSecret",
           "webhookPath",
         ],
       }),
@@ -214,6 +214,7 @@ export const smsPlugin: ChannelPlugin<ResolvedSmsAccount> = {
   gateway: {
     startAccount: async (ctx) => {
       const account = ctx.account;
+      const webhookPath = account.config.webhookPath || "/channels/sms/webhook";
       
       ctx.log?.info(`[${account.accountId}] Starting SMS provider via Kudosity`);
       
@@ -224,23 +225,27 @@ export const smsPlugin: ChannelPlugin<ResolvedSmsAccount> = {
           throw new Error("Kudosity API authentication failed - check your API key");
         }
 
+        // Register webhook route on the gateway's HTTP server
+        const handler = createSmsWebhookHandler({
+          account,
+          runtime: {
+            handleInboundMessage: ctx.runtime.handleInboundMessage,
+            log: ctx.log,
+          },
+        });
+
+        ctx.registerHttpRoute?.({
+          path: webhookPath,
+          handler,
+        });
+
+        ctx.log?.info(`[${account.accountId}] SMS webhook registered at ${webhookPath}`);
+
         ctx.setStatus({
           accountId: account.accountId,
           running: true,
           lastStartAt: new Date().toISOString(),
           lastError: null,
-        });
-
-        // Start webhook monitor
-        await monitorSmsProvider({
-          account,
-          config: ctx.cfg,
-          runtime: {
-            handleInboundMessage: ctx.runtime.handleInboundMessage,
-            log: ctx.log,
-          },
-          abortSignal: ctx.abortSignal,
-          statusSink: (patch) => ctx.setStatus({ accountId: ctx.accountId, ...patch }),
         });
 
       } catch (error) {

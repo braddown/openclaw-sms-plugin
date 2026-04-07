@@ -1,6 +1,4 @@
-import type { ChannelConfigSchema } from "openclaw/plugin-sdk";
-
-export const SmsConfigSchema: ChannelConfigSchema = {
+export const SmsConfigSchema = {
   schema: {
     type: "object",
     properties: {
@@ -19,7 +17,7 @@ export const SmsConfigSchema: ChannelConfigSchema = {
       },
       agentId: {
         type: "string",
-        description: "Kudosity agent profile ID (optional)",
+        description: "Kudosity agent profile ID",
       },
       allowFrom: {
         type: "array",
@@ -31,17 +29,16 @@ export const SmsConfigSchema: ChannelConfigSchema = {
         type: "string",
         enum: ["open", "pairing"],
         default: "pairing",
-        description: "Direct message policy: 'open' allows all, 'pairing' requires approval",
+        description: "Direct message policy: 'open' allows all, 'pairing' requires allowFrom approval",
       },
-      webhookPort: {
-        type: "number",
-        default: 3001,
-        description: "Port for receiving Kudosity webhooks",
+      callbackSecret: {
+        type: "string",
+        description: "HMAC-SHA256 secret for verifying Kudosity webhook signatures (optional)",
       },
       webhookPath: {
-        type: "string", 
+        type: "string",
         default: "/channels/sms/webhook",
-        description: "Webhook endpoint path",
+        description: "HTTP route path for receiving Kudosity callbacks",
       },
     },
     required: ["apiKey"],
@@ -58,15 +55,14 @@ export const SmsConfigSchema: ChannelConfigSchema = {
       placeholder: "kd_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     },
     baseUrl: {
-      label: "API Base URL", 
+      label: "API Base URL",
       help: "Kudosity API endpoint (use default unless using custom deployment)",
       advanced: true,
     },
     agentId: {
       label: "Agent Profile ID",
-      help: "Optional: Kudosity agent profile ID for message attribution",
+      help: "Your Kudosity agent profile ID",
       advanced: true,
-      placeholder: "790f6855-ed75-4b32-8656-602428d2b774",
     },
     allowFrom: {
       label: "Allowed Phone Numbers",
@@ -77,14 +73,15 @@ export const SmsConfigSchema: ChannelConfigSchema = {
       label: "Message Policy",
       help: "Who can send you SMS messages",
     },
-    webhookPort: {
-      label: "Webhook Port",
-      help: "Port to receive inbound SMS notifications", 
+    callbackSecret: {
+      label: "Callback Secret",
+      help: "HMAC secret for webhook signature verification (set this in your Kudosity agent profile too)",
+      sensitive: true,
       advanced: true,
     },
     webhookPath: {
       label: "Webhook Path",
-      help: "URL path for webhook endpoint",
+      help: "URL path for receiving Kudosity callbacks on the gateway",
       advanced: true,
     },
   },
