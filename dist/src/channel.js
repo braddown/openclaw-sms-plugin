@@ -240,6 +240,17 @@ export const smsPlugin = {
                 if (realtimeCleanup) {
                     ctx._smsRealtimeCleanup = realtimeCleanup;
                 }
+                // Keep the channel alive until abort signal fires.
+                // Without this, startAccount resolves immediately and the
+                // health monitor thinks the channel has stopped.
+                await new Promise((resolve) => {
+                    ctx.abortSignal.addEventListener("abort", () => {
+                        // Clean up polling monitor on shutdown
+                        if (realtimeCleanup)
+                            realtimeCleanup();
+                        resolve();
+                    }, { once: true });
+                });
             }
             catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);

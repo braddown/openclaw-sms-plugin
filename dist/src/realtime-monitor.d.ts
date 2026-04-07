@@ -17,13 +17,8 @@ export type RealtimeMonitorRuntime = {
     };
 };
 /**
- * Start a Supabase Realtime Broadcast subscription for inbound messages.
- *
- * The plugin subscribes to the `agent:{agentProfileId}:inbound` channel.
- * The Kudosity platform broadcasts to this channel when an inbound SMS
- * is routed to the agent. No RLS or authentication needed for broadcasts.
- *
- * Returns a cleanup function to stop the subscription.
+ * Start polling for new inbound messages.
+ * Returns a cleanup function to stop polling.
  */
 export declare function startRealtimeMonitor(params: {
     account: ResolvedSmsAccount;
