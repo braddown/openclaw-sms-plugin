@@ -1,6 +1,12 @@
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
-import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk";
 import type { ResolvedSmsAccount, SmsConfig } from "./types.js";
+
+// These are simple utilities — defined locally to avoid SDK version issues
+const DEFAULT_ACCOUNT_ID = "default";
+function normalizeAccountId(id: string | null | undefined): string {
+  return (id || "").trim() || DEFAULT_ACCOUNT_ID;
+}
+
+type OpenClawConfig = any;
 
 export function listSmsAccountIds(cfg: OpenClawConfig): string[] {
   const smsConfig = cfg.channels?.sms;

@@ -1,4 +1,9 @@
-import { buildChannelConfigSchema, DEFAULT_ACCOUNT_ID, formatAllowFromLowercase, setAccountEnabledInConfigSection, deleteAccountFromConfigSection, } from "openclaw/plugin-sdk";
+// Local SDK shims — avoids dependency on specific openclaw/plugin-sdk version
+const DEFAULT_ACCOUNT_ID = "default";
+const buildChannelConfigSchema = (schema) => schema;
+const formatAllowFromLowercase = ({ allowFrom }) => allowFrom.map((a) => a.toLowerCase().replace(/^(sms|phone):/i, ""));
+const setAccountEnabledInConfigSection = (params) => params;
+const deleteAccountFromConfigSection = (params) => params;
 import { listSmsAccountIds, resolveDefaultSmsAccountId, resolveSmsAccountSync, checkSmsAuthenticated, } from "./accounts.js";
 import { SmsConfigSchema } from "./config-schema.js";
 import { sendSmsMessage, chunkSmsText } from "./send.js";

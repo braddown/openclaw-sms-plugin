@@ -1,4 +1,8 @@
-import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk";
+// These are simple utilities — defined locally to avoid SDK version issues
+const DEFAULT_ACCOUNT_ID = "default";
+function normalizeAccountId(id) {
+    return (id || "").trim() || DEFAULT_ACCOUNT_ID;
+}
 export function listSmsAccountIds(cfg) {
     const smsConfig = cfg.channels?.sms;
     if (!smsConfig || typeof smsConfig !== "object") {
